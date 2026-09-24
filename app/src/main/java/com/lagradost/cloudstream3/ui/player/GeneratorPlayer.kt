@@ -1825,6 +1825,8 @@ class GeneratorPlayer : FullScreenPlayer() {
             layoutManager = LinearLayoutManager(root.context)
             overScrollMode = View.OVER_SCROLL_IF_CONTENT_SCROLLS
             descendantFocusability = ViewGroup.FOCUS_AFTER_DESCENDANTS
+            clipChildren = false
+            clipToPadding = false
         }
         val adapter = ZappingChannelAdapter { index ->
             toggleZappingList(false)
@@ -1918,7 +1920,7 @@ class GeneratorPlayer : FullScreenPlayer() {
             zappingChannelRecycler?.post {
                 val recycler = zappingChannelRecycler ?: return@post
                 val layoutManager = recycler.layoutManager as? LinearLayoutManager ?: return@post
-                val itemHeight = (recycler.width * 9f / 16f).toInt() + 16.toPx
+                val itemHeight = (recycler.width * 0.76f * 9f / 16f).toInt() + 8.toPx
                 val offset = ((recycler.height - itemHeight) / 2).coerceAtLeast(0)
                 layoutManager.scrollToPositionWithOffset(state.currentIndex, offset)
                 recycler.post {

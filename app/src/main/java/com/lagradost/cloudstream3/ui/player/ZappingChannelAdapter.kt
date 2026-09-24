@@ -10,8 +10,6 @@ import android.widget.FrameLayout
 import android.widget.ImageView
 import android.widget.TextView
 import androidx.cardview.widget.CardView
-import androidx.core.content.ContextCompat
-import androidx.core.view.isVisible
 import androidx.recyclerview.widget.RecyclerView
 import com.lagradost.cloudstream3.R
 import com.lagradost.cloudstream3.utils.ImageLoader.loadImage
@@ -34,14 +32,23 @@ class ZappingChannelAdapter(
 
     override fun onCreateViewHolder(parent: ViewGroup, viewType: Int): ChannelViewHolder {
         val context = parent.context
-        val card = AspectRatioCardView(context).apply {
+        val item = CarouselItemContainer(context).apply {
             layoutParams = RecyclerView.LayoutParams(
                 ViewGroup.LayoutParams.MATCH_PARENT,
                 ViewGroup.LayoutParams.WRAP_CONTENT,
             ).apply {
-                topMargin = 8.toPx
-                bottomMargin = 8.toPx
+                topMargin = 4.toPx
+                bottomMargin = 4.toPx
             }
+            clipChildren = false
+            clipToPadding = false
+        }
+        val card = AspectRatioCardView(context).apply {
+            layoutParams = FrameLayout.LayoutParams(
+                ViewGroup.LayoutParams.WRAP_CONTENT,
+                ViewGroup.LayoutParams.WRAP_CONTENT,
+                Gravity.END,
+            )
             radius = 12.toPx.toFloat()
             cardElevation = 2.toPx.toFloat()
             useCompatPadding = true
@@ -76,35 +83,21 @@ class ZappingChannelAdapter(
                 ViewGroup.LayoutParams.WRAP_CONTENT,
                 Gravity.BOTTOM,
             ).apply {
-                marginStart = 16.toPx
-                marginEnd = 16.toPx
-                bottomMargin = 12.toPx
+                marginStart = 8.toPx
+                marginEnd = 8.toPx
+                bottomMargin = 6.toPx
             }
-            textSize = 16f
+            textSize = 12f
             maxLines = 1
             ellipsize = android.text.TextUtils.TruncateAt.END
             setTextColor(context.colorFromAttribute(R.attr.textColor))
         }
-        val active = TextView(context).apply {
-            layoutParams = FrameLayout.LayoutParams(
-                ViewGroup.LayoutParams.WRAP_CONTENT,
-                ViewGroup.LayoutParams.WRAP_CONTENT,
-                Gravity.TOP or Gravity.START,
-            ).apply {
-                topMargin = 12.toPx
-                marginStart = 12.toPx
-            }
-            text = "●"
-            textSize = 13f
-            setTextColor(context.colorFromAttribute(R.attr.colorPrimary))
-            visibility = View.GONE
-        }
         content.addView(poster)
         content.addView(scrim)
         content.addView(title)
-        content.addView(active)
         card.addView(content)
-        return ChannelViewHolder(card, poster, title, active)
+        item.addView(card)
+        return ChannelViewHolder(item, card, poster, title)
     }
 
     override fun onBindViewHolder(holder: ChannelViewHolder, position: Int) {
@@ -112,39 +105,95 @@ class ZappingChannelAdapter(
         val isActive = position == selectedIndex
         holder.poster.loadImage(channel.posterUrl)
         holder.title.text = channel.name
-        holder.active.isVisible = isActive
         holder.title.setTypeface(null, if (isActive) Typeface.BOLD else Typeface.NORMAL)
-        holder.title.setTextColor(
-            if (isActive) holder.title.context.colorFromAttribute(R.attr.textColor)
-            else holder.title.context.colorFromAttribute(R.attr.grayTextColor)
-        )
+        holder.title.setTextColor(holder.title.context.colorFromAttribute(R.attr.textColor))
         holder.card.setCardBackgroundColor(
-            if (isActive) holder.card.context.colorFromAttribute(R.attr.primaryBlackBackground)
-            else holder.card.context.colorFromAttribute(R.attr.boxItemBackground)
+            holder.card.context.colorFromAttribute(R.attr.primaryBlackBackground)
         )
-        holder.card.scaleX = if (isActive) 1.03f else 1f
-        holder.card.scaleY = if (isActive) 1.03f else 1f
-        holder.card.cardElevation = if (isActive) 8.toPx.toFloat() else 2.toPx.toFloat()
-        holder.card.foreground = if (holder.card.hasFocus()) {
-            ContextCompat.getDrawable(holder.card.context, R.drawable.outline_drawable_less)
-        } else null
+        holder.card.animate().cancel()
+        applyVisualState(holder, isActive, holder.card.hasFocus(), animate = false)
         holder.card.contentDescription = channel.name
         holder.card.setOnClickListener { onChannelClick(position) }
         holder.card.setOnFocusChangeListener { view, hasFocus ->
-            view.foreground = if (hasFocus) {
-                ContextCompat.getDrawable(view.context, R.drawable.outline_drawable_less)
-            } else null
+            applyVisualState(holder, position == selectedIndex, hasFocus, animate = true)
+            if (hasFocus) {
+                centerFocusedItem(holder.itemView)
+            }
+        }
+    }
+
+    private fun applyVisualState(
+        holder: ChannelViewHolder,
+        isActive: Boolean,
+        isFocused: Boolean,
+        animate: Boolean,
+    ) {
+        val card = holder.card
+        val context = card.context
+        val highlighted = isActive || isFocused
+        val targetScale = if (highlighted) 1.07f else 1f
+        val targetElevation = if (highlighted) 10.toPx.toFloat() else 2.toPx.toFloat()
+        card.foreground = if (highlighted) accentGlow(context) else null
+        card.cardElevation = targetElevation
+        if (animate) {
+            card.animate()
+                .scaleX(targetScale)
+                .scaleY(targetScale)
+                .setDuration(150L)
+                .start()
+        } else {
+            card.scaleX = targetScale
+            card.scaleY = targetScale
+        }
+    }
+
+    private fun accentGlow(context: android.content.Context): GradientDrawable {
+        val accent = context.colorFromAttribute(R.attr.colorPrimary)
+        val glowColor = Color.argb(0xB0, Color.red(accent), Color.green(accent), Color.blue(accent))
+        return GradientDrawable().apply {
+            cornerRadius = 12.toPx.toFloat()
+            setColor(Color.TRANSPARENT)
+            setStroke(2.toPx, glowColor)
+        }
+    }
+
+    private fun centerFocusedItem(view: View) {
+        val recycler = view.parent?.parent as? RecyclerView ?: return
+        recycler.post {
+            val itemCenter = view.top + view.height / 2
+            val viewportCenter = recycler.height / 2
+            recycler.smoothScrollBy(0, itemCenter - viewportCenter)
         }
     }
 
     override fun getItemCount(): Int = channels.size
 
     class ChannelViewHolder(
+        val itemViewContainer: CarouselItemContainer,
         val card: AspectRatioCardView,
         val poster: ImageView,
         val title: TextView,
-        val active: TextView,
-    ) : RecyclerView.ViewHolder(card)
+    ) : RecyclerView.ViewHolder(itemViewContainer)
+
+    class CarouselItemContainer(context: android.content.Context) : FrameLayout(context) {
+        override fun onMeasure(widthMeasureSpec: Int, heightMeasureSpec: Int) {
+            val availableWidth = MeasureSpec.getSize(widthMeasureSpec)
+            val cardWidth = (availableWidth * 0.76f).roundToInt()
+            val cardHeight = (cardWidth * 9f / 16f).roundToInt()
+            val card = getChildAt(0)
+            card?.measure(
+                MeasureSpec.makeMeasureSpec(cardWidth, MeasureSpec.EXACTLY),
+                MeasureSpec.makeMeasureSpec(cardHeight, MeasureSpec.EXACTLY),
+            )
+            setMeasuredDimension(availableWidth, cardHeight)
+        }
+
+        override fun onLayout(changed: Boolean, left: Int, top: Int, right: Int, bottom: Int) {
+            val card = getChildAt(0) ?: return
+            val cardLeft = width - card.measuredWidth
+            card.layout(cardLeft, 0, width, card.measuredHeight)
+        }
+    }
 
     class AspectRatioCardView(context: android.content.Context) : CardView(context) {
         override fun onMeasure(widthMeasureSpec: Int, heightMeasureSpec: Int) {
