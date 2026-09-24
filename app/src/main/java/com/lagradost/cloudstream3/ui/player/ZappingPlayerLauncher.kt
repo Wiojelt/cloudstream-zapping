@@ -24,6 +24,22 @@ object ZappingPlayerLauncher {
         return bundle
     }
 
+    /**
+     * Launches a player for a result that may have originated from a live Home category.
+     * Pending state is consumed only when the player is actually created, so backing out of the
+     * result page does not create a player session and the full channel list never enters a Bundle.
+     */
+    fun newInstanceFromPending(
+        generator: VideoGenerator<*>,
+        index: Int,
+        syncData: HashMap<String, String>? = null,
+        url: String,
+        apiName: String,
+    ): Bundle {
+        val context = PendingZappingStore.consume(url, apiName)
+        return newInstance(generator, index, syncData, context)
+    }
+
     fun session(bundle: Bundle?): ZappingSession? {
         val uuid = bundle?.getString("uuid") ?: return null
         val context = ZappingSessionStore.get(uuid) ?: return null
