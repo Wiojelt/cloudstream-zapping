@@ -35,8 +35,9 @@ object ZappingPlayerLauncher {
         syncData: HashMap<String, String>? = null,
         url: String,
         apiName: String,
+        channelName: String? = null,
     ): Bundle {
-        val context = PendingZappingStore.consume(url, apiName)
+        val context = PendingZappingStore.consume(url, apiName, channelName)
         return newInstance(generator, index, syncData, context)
     }
 

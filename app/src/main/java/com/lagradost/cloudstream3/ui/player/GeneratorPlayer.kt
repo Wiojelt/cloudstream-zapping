@@ -1749,10 +1749,29 @@ class GeneratorPlayer : FullScreenPlayer() {
         } == true
     }
 
+    private fun zappingOverlayParent(): FrameLayout? {
+        val rootView: View = playerBinding?.root ?: return null
+        if (rootView is FrameLayout) return rootView
+
+        // Keep this defensive for alternate player controller layouts. The generated stable
+        // layouts currently use FrameLayout, but the zapping controls must not disappear merely
+        // because a future controller root changes its concrete class.
+        val parent = rootView as? ViewGroup ?: return null
+        return FrameLayout(rootView.context).also { overlay ->
+            parent.addView(
+                overlay,
+                ViewGroup.LayoutParams(
+                    ViewGroup.LayoutParams.MATCH_PARENT,
+                    ViewGroup.LayoutParams.MATCH_PARENT,
+                )
+            )
+        }
+    }
+
     private fun setupZappingUi() {
         val session = zappingSession ?: return
         if (!isZappingEnabled()) return
-        val root = playerBinding?.root as? FrameLayout ?: return
+        val root = zappingOverlayParent() ?: return
         if (zappingChannelButton != null) return
 
         val button = MaterialButton(root.context).apply {

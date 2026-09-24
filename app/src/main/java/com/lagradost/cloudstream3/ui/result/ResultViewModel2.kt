@@ -1570,6 +1570,7 @@ class ResultViewModel2 : ViewModel() {
                                 syncData = list,
                                 url = response.url,
                                 apiName = response.apiName,
+                                channelName = response.name,
                             )
                         } else {
                             GeneratorPlayer.newInstance(generator, index, list)
