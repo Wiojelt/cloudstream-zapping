@@ -1737,6 +1737,11 @@ class GeneratorPlayer : FullScreenPlayer() {
             keyCode != android.view.KeyEvent.KEYCODE_DPAD_DOWN
         ) return false
         if (isShowing || isDialogOpen()) return false
+        if (context?.let { ctx ->
+                PreferenceManager.getDefaultSharedPreferences(ctx)
+                    .getBoolean(getString(R.string.zapping_enabled_key), true)
+            } != true
+        ) return false
 
         val session = zappingSession ?: return false
         val context = session.current() ?: return false
