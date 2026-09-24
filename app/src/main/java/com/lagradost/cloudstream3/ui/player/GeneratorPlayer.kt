@@ -13,11 +13,13 @@ import android.os.Build
 import android.os.Bundle
 import android.text.Spanned
 import android.util.Log
+import android.view.Gravity
 import android.view.LayoutInflater
 import android.view.View
 import android.view.ViewGroup
 import android.widget.AbsListView
 import android.widget.ArrayAdapter
+import android.widget.FrameLayout
 import android.widget.ImageView
 import android.widget.LinearLayout
 import android.widget.TextView
@@ -47,6 +49,7 @@ import androidx.media3.ui.PlayerNotificationManager.MediaDescriptionAdapter
 import androidx.preference.PreferenceManager
 import androidx.recyclerview.widget.LinearLayoutManager
 import androidx.recyclerview.widget.RecyclerView
+import com.google.android.material.button.MaterialButton
 import com.lagradost.cloudstream3.APIHolder.getApiFromNameNull
 import com.lagradost.cloudstream3.CloudStreamApp
 import com.lagradost.cloudstream3.CloudStreamApp.Companion.setKey
@@ -196,6 +199,12 @@ class GeneratorPlayer : FullScreenPlayer() {
     private var zappingSession: ZappingSession? = null
     private val zappingSwitchInProgress = AtomicBoolean(false)
     private var zappingLoadJob: Job? = null
+    private var zappingOverlayJob: Job? = null
+    private var zappingChannelButton: MaterialButton? = null
+    private var zappingChannelList: LinearLayout? = null
+    private var zappingChannelRecycler: RecyclerView? = null
+    private var zappingChannelOverlay: TextView? = null
+    private var zappingChannelAdapter: ZappingChannelAdapter? = null
 
     private var preferredAutoSelectSubtitles: String? = null // null means do nothing, "" means none
     private val allMeta: List<ResultEpisode>?
@@ -1728,31 +1737,145 @@ class GeneratorPlayer : FullScreenPlayer() {
         ResultFragment.updateUI()
         currentVerifyLink?.cancel()
         zappingLoadJob?.cancel()
+        zappingOverlayJob?.cancel()
         zappingSession?.close()
         super.onDestroy()
     }
 
-    override fun handleLiveChannelKey(keyCode: Int): Boolean {
-        if (keyCode != android.view.KeyEvent.KEYCODE_DPAD_UP &&
-            keyCode != android.view.KeyEvent.KEYCODE_DPAD_DOWN
-        ) return false
-        if (isShowing || isDialogOpen()) return false
-        if (context?.let { ctx ->
-                PreferenceManager.getDefaultSharedPreferences(ctx)
-                    .getBoolean(getString(R.string.zapping_enabled_key), true)
-            } != true
-        ) return false
+    private fun isZappingEnabled(): Boolean {
+        return context?.let { ctx ->
+            PreferenceManager.getDefaultSharedPreferences(ctx)
+                .getBoolean(getString(R.string.zapping_enabled_key), true)
+        } == true
+    }
 
+    private fun setupZappingUi() {
+        val session = zappingSession ?: return
+        if (!isZappingEnabled()) return
+        val root = playerBinding?.root as? FrameLayout ?: return
+        if (zappingChannelButton != null) return
+
+        val button = MaterialButton(root.context).apply {
+            text = getString(R.string.zapping_channels)
+            isAllCaps = false
+            minHeight = 0
+            minimumHeight = 0
+            setPadding(12.toPx, 0, 12.toPx, 0)
+            setIconResource(R.drawable.autorenew_24px)
+            setOnClickListener { toggleZappingList(true) }
+            contentDescription = getString(R.string.zapping_channels)
+        }
+        root.addView(
+            button,
+            FrameLayout.LayoutParams(ViewGroup.LayoutParams.WRAP_CONTENT, 48.toPx).apply {
+                gravity = Gravity.TOP or Gravity.END
+                topMargin = 24.toPx
+                marginEnd = 24.toPx
+            }
+        )
+        zappingChannelButton = button
+
+        val panel = LinearLayout(root.context).apply {
+            orientation = LinearLayout.VERTICAL
+            setBackgroundColor(root.context.colorFromAttribute(R.attr.primaryBlackBackground))
+            elevation = 12.toPx.toFloat()
+            visibility = View.GONE
+        }
+        val header = LinearLayout(root.context).apply {
+            orientation = LinearLayout.HORIZONTAL
+            gravity = Gravity.CENTER_VERTICAL
+            setPadding(16.toPx, 8.toPx, 8.toPx, 8.toPx)
+        }
+        val title = TextView(root.context).apply {
+            text = getString(R.string.zapping_channels)
+            textSize = 18f
+            setTextColor(root.context.colorFromAttribute(R.attr.textColor))
+            layoutParams = LinearLayout.LayoutParams(0, ViewGroup.LayoutParams.WRAP_CONTENT, 1f)
+        }
+        val close = MaterialButton(root.context).apply {
+            text = "×"
+            isAllCaps = false
+            minWidth = 48.toPx
+            minHeight = 48.toPx
+            setOnClickListener { toggleZappingList(false) }
+            contentDescription = getString(R.string.sort_close)
+        }
+        header.addView(title)
+        header.addView(close)
+        panel.addView(header, LinearLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, 64.toPx))
+
+        val recycler = RecyclerView(root.context).apply {
+            layoutManager = LinearLayoutManager(root.context)
+            overScrollMode = View.OVER_SCROLL_IF_CONTENT_SCROLLS
+            descendantFocusability = ViewGroup.FOCUS_AFTER_DESCENDANTS
+        }
+        val adapter = ZappingChannelAdapter { index ->
+            toggleZappingList(false)
+            switchToLiveChannel(index)
+        }
+        recycler.adapter = adapter
+        panel.addView(recycler, LinearLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, 0, 1f))
+        root.addView(
+            panel,
+            FrameLayout.LayoutParams(if (isLayout(TV or EMULATOR)) 420.toPx else 320.toPx, ViewGroup.LayoutParams.MATCH_PARENT).apply {
+                gravity = Gravity.TOP or Gravity.END
+            }
+        )
+        zappingChannelList = panel
+        zappingChannelRecycler = recycler
+        zappingChannelAdapter = adapter
+
+        val channelOverlay = TextView(root.context).apply {
+            gravity = Gravity.CENTER
+            textSize = 20f
+            setTextColor(root.context.colorFromAttribute(R.attr.textColor))
+            setBackgroundColor(root.context.colorFromAttribute(R.attr.primaryBlackBackground))
+            setPadding(28.toPx, 16.toPx, 28.toPx, 16.toPx)
+            visibility = View.GONE
+            elevation = 16.toPx.toFloat()
+        }
+        root.addView(
+            channelOverlay,
+            FrameLayout.LayoutParams(ViewGroup.LayoutParams.WRAP_CONTENT, ViewGroup.LayoutParams.WRAP_CONTENT).apply {
+                gravity = Gravity.CENTER
+            }
+        )
+        zappingChannelOverlay = channelOverlay
+        adapter.submit(session.current()?.channels.orEmpty(), session.current()?.currentIndex ?: 0)
+    }
+
+    private fun toggleZappingList(show: Boolean) {
+        if (show && !isZappingEnabled()) return
+        val panel = zappingChannelList ?: return
+        panel.isVisible = show
+        if (show) {
+            val state = zappingSession?.current() ?: return
+            zappingChannelAdapter?.submit(state.channels, state.currentIndex)
+            zappingChannelRecycler?.scrollToPosition(state.currentIndex)
+            zappingChannelRecycler?.post {
+                zappingChannelRecycler?.findViewHolderForAdapterPosition(state.currentIndex)?.itemView?.requestFocus()
+            }
+        }
+    }
+
+    private fun showZappingChannelOverlay(channel: ZappingChannel) {
+        val overlay = zappingChannelOverlay ?: return
+        overlay.text = channel.name
+        overlay.isVisible = true
+        zappingOverlayJob?.cancel()
+        zappingOverlayJob = viewLifecycleOwner.lifecycleScope.launch {
+            delay(1800)
+            overlay.isVisible = false
+        }
+    }
+
+    private fun switchToLiveChannel(targetIndex: Int): Boolean {
         val session = zappingSession ?: return false
-        val context = session.current() ?: return false
+        val state = session.current() ?: return false
+        if (targetIndex !in state.channels.indices || targetIndex == state.currentIndex) return true
         if (!zappingSwitchInProgress.compareAndSet(false, true)) return true
 
-        val targetIndex = if (keyCode == android.view.KeyEvent.KEYCODE_DPAD_UP) {
-            context.previousIndex()
-        } else {
-            context.nextIndex()
-        }
-        val target = context.channels[targetIndex]
+        val target = state.channels[targetIndex]
         zappingLoadJob?.cancel()
         zappingLoadJob = viewLifecycleOwner.lifecycleScope.launch {
             var playbackLoadStarted = false
@@ -1780,7 +1903,8 @@ class GeneratorPlayer : FullScreenPlayer() {
                 releasePlayer()
                 viewModel.attachGenerator(RepoLinkGenerator(listOf(episode), page = load), 0)
                 session.select(targetIndex)
-                showToast(activity, target.name, Toast.LENGTH_SHORT)
+                zappingChannelAdapter?.submit(state.channels, targetIndex)
+                showZappingChannelOverlay(target)
                 viewModel.loadLinks()
                 playbackLoadStarted = true
             } catch (error: Throwable) {
@@ -1791,6 +1915,24 @@ class GeneratorPlayer : FullScreenPlayer() {
             }
         }
         return true
+    }
+
+    override fun handleLiveChannelKey(keyCode: Int): Boolean {
+        if (keyCode != android.view.KeyEvent.KEYCODE_DPAD_UP &&
+            keyCode != android.view.KeyEvent.KEYCODE_DPAD_DOWN
+        ) return false
+        if (isShowing || isDialogOpen()) return false
+        if (!isZappingEnabled() || zappingChannelList?.isVisible == true) return false
+
+        val session = zappingSession ?: return false
+        val context = session.current() ?: return false
+
+        val targetIndex = if (keyCode == android.view.KeyEvent.KEYCODE_DPAD_UP) {
+            context.previousIndex()
+        } else {
+            context.nextIndex()
+        }
+        return switchToLiveChannel(targetIndex)
     }
 
     var maxEpisodeSet: Int? = null
@@ -2321,6 +2463,7 @@ class GeneratorPlayer : FullScreenPlayer() {
 
         val sessionBundle = savedInstanceState?.takeIf { it.getString("uuid") != null } ?: arguments
         zappingSession = ZappingPlayerLauncher.session(sessionBundle)
+        setupZappingUi()
 
         // Avoid showing no links found
         if (generator == null || index == null) {
