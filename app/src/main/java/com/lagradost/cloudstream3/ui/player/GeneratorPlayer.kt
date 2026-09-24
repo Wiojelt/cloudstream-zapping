@@ -1792,7 +1792,10 @@ class GeneratorPlayer : FullScreenPlayer() {
 
         val panel = LinearLayout(root.context).apply {
             orientation = LinearLayout.VERTICAL
-            setBackgroundColor(root.context.colorFromAttribute(R.attr.primaryBlackBackground))
+            background = GradientDrawable(
+                GradientDrawable.Orientation.LEFT_RIGHT,
+                intArrayOf(Color.TRANSPARENT, 0x66000000),
+            )
             elevation = 12.toPx.toFloat()
             visibility = View.GONE
         }
@@ -1831,7 +1834,7 @@ class GeneratorPlayer : FullScreenPlayer() {
         panel.addView(recycler, LinearLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, 0, 1f))
         root.addView(
             panel,
-            FrameLayout.LayoutParams(if (isLayout(TV or EMULATOR)) 420.toPx else 320.toPx, ViewGroup.LayoutParams.MATCH_PARENT).apply {
+            FrameLayout.LayoutParams(if (isLayout(TV or EMULATOR)) 300.toPx else 260.toPx, ViewGroup.LayoutParams.MATCH_PARENT).apply {
                 gravity = Gravity.TOP or Gravity.END
             }
         )
