@@ -450,7 +450,9 @@ open class FullScreenPlayer : AbstractPlayerFragment<FragmentPlayerBinding>(
         setupKeyEventListener()
         playerHostView?.verifyVolume()
         activity?.attachBackPressedCallback("FullScreenPlayer") {
-            if (isShowingEpisodeOverlay) {
+            if (handlePlayerBackPressed()) {
+                return@attachBackPressedCallback
+            } else if (isShowingEpisodeOverlay) {
                 // isShowingEpisodeOverlay pauses, so this makes it easier to unpause
                 if (isLayout(TV or EMULATOR)) {
                     playerPausePlay?.requestFocus()
@@ -853,6 +855,9 @@ open class FullScreenPlayer : AbstractPlayerFragment<FragmentPlayerBinding>(
      * controls are hidden. Normal player navigation remains unchanged when this returns false.
      */
     protected open fun handleLiveChannelKey(keyCode: Int): Boolean = false
+
+    /** Gives specialised players a chance to close an in-player panel before leaving playback. */
+    protected open fun handlePlayerBackPressed(): Boolean = false
 
     override fun playerStatusChanged() {
         super.playerStatusChanged()

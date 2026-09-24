@@ -8,7 +8,9 @@ import android.content.Context
 import android.content.Intent
 import android.content.res.ColorStateList
 import android.graphics.Bitmap
+import android.graphics.Color
 import android.graphics.Typeface
+import android.graphics.drawable.GradientDrawable
 import android.os.Build
 import android.os.Bundle
 import android.text.Spanned
@@ -118,6 +120,7 @@ import com.lagradost.cloudstream3.utils.DataStoreHelper
 import com.lagradost.cloudstream3.utils.DataStoreHelper.getViewPos
 import com.lagradost.cloudstream3.utils.ExtractorLink
 import com.lagradost.cloudstream3.utils.ExtractorLinkType
+import com.lagradost.cloudstream3.utils.ImageLoader.loadImage
 import com.lagradost.cloudstream3.utils.Qualities
 import com.lagradost.cloudstream3.utils.SingleSelectionHelper.showDialog
 import com.lagradost.cloudstream3.utils.SubtitleHelper.fromTagToEnglishLanguageName
@@ -200,10 +203,11 @@ class GeneratorPlayer : FullScreenPlayer() {
     private val zappingSwitchInProgress = AtomicBoolean(false)
     private var zappingLoadJob: Job? = null
     private var zappingOverlayJob: Job? = null
-    private var zappingChannelButton: MaterialButton? = null
     private var zappingChannelList: LinearLayout? = null
     private var zappingChannelRecycler: RecyclerView? = null
-    private var zappingChannelOverlay: TextView? = null
+    private var zappingChannelOverlay: FrameLayout? = null
+    private var zappingChannelOverlayPoster: ImageView? = null
+    private var zappingChannelOverlayTitle: TextView? = null
     private var zappingChannelAdapter: ZappingChannelAdapter? = null
 
     private var preferredAutoSelectSubtitles: String? = null // null means do nothing, "" means none
@@ -1738,8 +1742,17 @@ class GeneratorPlayer : FullScreenPlayer() {
         currentVerifyLink?.cancel()
         zappingLoadJob?.cancel()
         zappingOverlayJob?.cancel()
-        zappingSession?.close()
+        if (activity?.isChangingConfigurations != true) {
+            zappingSession?.close()
+        }
         super.onDestroy()
+    }
+
+    override fun onResume() {
+        super.onResume()
+        val enabled = isZappingEnabled() && zappingSession?.current() != null
+        playerBinding?.playerChannelListBtt?.isVisible = enabled
+        if (!enabled) toggleZappingList(false)
     }
 
     private fun isZappingEnabled(): Boolean {
@@ -1772,27 +1785,10 @@ class GeneratorPlayer : FullScreenPlayer() {
         val session = zappingSession ?: return
         if (!isZappingEnabled()) return
         val root = zappingOverlayParent() ?: return
-        if (zappingChannelButton != null) return
-
-        val button = MaterialButton(root.context).apply {
-            text = getString(R.string.zapping_channels)
-            isAllCaps = false
-            minHeight = 0
-            minimumHeight = 0
-            setPadding(12.toPx, 0, 12.toPx, 0)
-            setIconResource(R.drawable.autorenew_24px)
-            setOnClickListener { toggleZappingList(true) }
-            contentDescription = getString(R.string.zapping_channels)
-        }
-        root.addView(
-            button,
-            FrameLayout.LayoutParams(ViewGroup.LayoutParams.WRAP_CONTENT, 48.toPx).apply {
-                gravity = Gravity.TOP or Gravity.END
-                topMargin = 24.toPx
-                marginEnd = 24.toPx
-            }
-        )
-        zappingChannelButton = button
+        if (zappingChannelList != null) return
+        val button = playerBinding?.playerChannelListBtt ?: return
+        button.isVisible = true
+        button.setOnClickListener { toggleZappingList(true) }
 
         val panel = LinearLayout(root.context).apply {
             orientation = LinearLayout.VERTICAL
@@ -1806,14 +1802,13 @@ class GeneratorPlayer : FullScreenPlayer() {
             setPadding(16.toPx, 8.toPx, 8.toPx, 8.toPx)
         }
         val title = TextView(root.context).apply {
-            text = getString(R.string.zapping_channels)
+            text = getString(R.string.player_channel_list)
             textSize = 18f
             setTextColor(root.context.colorFromAttribute(R.attr.textColor))
             layoutParams = LinearLayout.LayoutParams(0, ViewGroup.LayoutParams.WRAP_CONTENT, 1f)
         }
         val close = MaterialButton(root.context).apply {
-            text = "×"
-            isAllCaps = false
+            setIconResource(R.drawable.ic_baseline_close_24)
             minWidth = 48.toPx
             minHeight = 48.toPx
             setOnClickListener { toggleZappingList(false) }
@@ -1844,22 +1839,68 @@ class GeneratorPlayer : FullScreenPlayer() {
         zappingChannelRecycler = recycler
         zappingChannelAdapter = adapter
 
-        val channelOverlay = TextView(root.context).apply {
-            gravity = Gravity.CENTER
-            textSize = 20f
-            setTextColor(root.context.colorFromAttribute(R.attr.textColor))
-            setBackgroundColor(root.context.colorFromAttribute(R.attr.primaryBlackBackground))
-            setPadding(28.toPx, 16.toPx, 28.toPx, 16.toPx)
+        val channelOverlay = FrameLayout(root.context).apply {
             visibility = View.GONE
             elevation = 16.toPx.toFloat()
         }
+        val overlayCard = androidx.cardview.widget.CardView(root.context).apply {
+            radius = 14.toPx.toFloat()
+            cardElevation = 8.toPx.toFloat()
+            setCardBackgroundColor(root.context.colorFromAttribute(R.attr.primaryBlackBackground))
+        }
+        val overlayContent = FrameLayout(root.context)
+        val overlayPoster = ImageView(root.context).apply {
+            layoutParams = FrameLayout.LayoutParams(
+                ViewGroup.LayoutParams.MATCH_PARENT,
+                ViewGroup.LayoutParams.MATCH_PARENT,
+            )
+            scaleType = ImageView.ScaleType.CENTER_CROP
+            setBackgroundColor(root.context.colorFromAttribute(R.attr.boxItemBackground))
+        }
+        val overlayScrim = View(root.context).apply {
+            layoutParams = FrameLayout.LayoutParams(
+                ViewGroup.LayoutParams.MATCH_PARENT,
+                96.toPx,
+                Gravity.BOTTOM,
+            )
+            background = GradientDrawable(
+                GradientDrawable.Orientation.TOP_BOTTOM,
+                intArrayOf(Color.TRANSPARENT, 0xF0000000.toInt()),
+            )
+        }
+        val overlayTitle = TextView(root.context).apply {
+            layoutParams = FrameLayout.LayoutParams(
+                ViewGroup.LayoutParams.MATCH_PARENT,
+                ViewGroup.LayoutParams.WRAP_CONTENT,
+                Gravity.BOTTOM,
+            ).apply {
+                marginStart = 20.toPx
+                marginEnd = 20.toPx
+                bottomMargin = 16.toPx
+            }
+            textSize = 20f
+            maxLines = 2
+            ellipsize = android.text.TextUtils.TruncateAt.END
+            setTextColor(root.context.colorFromAttribute(R.attr.textColor))
+        }
+        overlayContent.addView(overlayPoster)
+        overlayContent.addView(overlayScrim)
+        overlayContent.addView(overlayTitle)
+        overlayCard.addView(
+            overlayContent,
+            ViewGroup.LayoutParams(320.toPx, 180.toPx),
+        )
+        channelOverlay.addView(
+            overlayCard,
+            FrameLayout.LayoutParams(320.toPx, 180.toPx, Gravity.CENTER),
+        )
         root.addView(
             channelOverlay,
-            FrameLayout.LayoutParams(ViewGroup.LayoutParams.WRAP_CONTENT, ViewGroup.LayoutParams.WRAP_CONTENT).apply {
-                gravity = Gravity.CENTER
-            }
+            FrameLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.MATCH_PARENT)
         )
         zappingChannelOverlay = channelOverlay
+        zappingChannelOverlayPoster = overlayPoster
+        zappingChannelOverlayTitle = overlayTitle
         adapter.submit(session.current()?.channels.orEmpty(), session.current()?.currentIndex ?: 0)
     }
 
@@ -1868,18 +1909,27 @@ class GeneratorPlayer : FullScreenPlayer() {
         val panel = zappingChannelList ?: return
         panel.isVisible = show
         if (show) {
+            playerHostView?.cancelAutoHide()
             val state = zappingSession?.current() ?: return
             zappingChannelAdapter?.submit(state.channels, state.currentIndex)
-            zappingChannelRecycler?.scrollToPosition(state.currentIndex)
             zappingChannelRecycler?.post {
-                zappingChannelRecycler?.findViewHolderForAdapterPosition(state.currentIndex)?.itemView?.requestFocus()
+                val recycler = zappingChannelRecycler ?: return@post
+                val layoutManager = recycler.layoutManager as? LinearLayoutManager ?: return@post
+                val itemHeight = (recycler.width * 9f / 16f).toInt() + 16.toPx
+                val offset = ((recycler.height - itemHeight) / 2).coerceAtLeast(0)
+                layoutManager.scrollToPositionWithOffset(state.currentIndex, offset)
+                recycler.post {
+                    recycler.findViewHolderForAdapterPosition(state.currentIndex)?.itemView?.requestFocus()
+                }
             }
         }
     }
 
     private fun showZappingChannelOverlay(channel: ZappingChannel) {
+        if (!isZappingEnabled()) return
         val overlay = zappingChannelOverlay ?: return
-        overlay.text = channel.name
+        zappingChannelOverlayPoster?.loadImage(channel.posterUrl)
+        zappingChannelOverlayTitle?.text = channel.name
         overlay.isVisible = true
         zappingOverlayJob?.cancel()
         zappingOverlayJob = viewLifecycleOwner.lifecycleScope.launch {
@@ -1888,7 +1938,17 @@ class GeneratorPlayer : FullScreenPlayer() {
         }
     }
 
+    override fun handlePlayerBackPressed(): Boolean {
+        if (zappingChannelList?.isVisible == true) {
+            toggleZappingList(false)
+            playerBinding?.playerChannelListBtt?.requestFocus()
+            return true
+        }
+        return false
+    }
+
     private fun switchToLiveChannel(targetIndex: Int): Boolean {
+        if (!isZappingEnabled()) return false
         val session = zappingSession ?: return false
         val state = session.current() ?: return false
         if (targetIndex !in state.channels.indices || targetIndex == state.currentIndex) return true
