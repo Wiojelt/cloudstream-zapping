@@ -13,6 +13,8 @@ data class ZappingSession(
 
     fun current(): ZappingContext? = ZappingSessionStore.get(uuid)
 
+    fun select(index: Int): ZappingContext? = ZappingSessionStore.updateIndex(uuid, index)
+
     fun selectPrevious(): ZappingContext? {
         val state = current() ?: return null
         return ZappingSessionStore.updateIndex(uuid, state.previousIndex())

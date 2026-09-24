@@ -34,6 +34,7 @@ import androidx.core.text.toSpanned
 import androidx.core.view.isGone
 import androidx.core.view.isVisible
 import androidx.lifecycle.ViewModelProvider
+import androidx.lifecycle.lifecycleScope
 import androidx.lifecycle.viewModelScope
 import androidx.media3.common.Format.NO_VALUE
 import androidx.media3.common.MimeTypes
@@ -51,6 +52,7 @@ import com.lagradost.cloudstream3.CloudStreamApp
 import com.lagradost.cloudstream3.CloudStreamApp.Companion.setKey
 import com.lagradost.cloudstream3.CommonActivity.showToast
 import com.lagradost.cloudstream3.LoadResponse
+import com.lagradost.cloudstream3.LiveStreamLoadResponse
 import com.lagradost.cloudstream3.LoadResponse.Companion.getAniListId
 import com.lagradost.cloudstream3.LoadResponse.Companion.getImdbId
 import com.lagradost.cloudstream3.LoadResponse.Companion.getMalId
@@ -76,6 +78,7 @@ import com.lagradost.cloudstream3.subtitles.AbstractSubtitleEntities
 import com.lagradost.cloudstream3.subtitles.AbstractSubtitleEntities.SubtitleSearch
 import com.lagradost.cloudstream3.syncproviders.AccountManager.Companion.subtitleProviders
 import com.lagradost.cloudstream3.ui.download.DownloadButtonSetup
+import com.lagradost.cloudstream3.ui.APIRepository
 import com.lagradost.cloudstream3.ui.player.CS3IPlayer.Companion.preferredAudioTrackLanguage
 import com.lagradost.cloudstream3.ui.player.CustomDecoder.Companion.updateForcedEncoding
 import com.lagradost.cloudstream3.ui.player.PlayerSubtitleHelper.Companion.toSubtitleMimeType
@@ -92,6 +95,7 @@ import com.lagradost.cloudstream3.ui.result.ResultFragment
 import com.lagradost.cloudstream3.ui.result.ResultFragment.bindLogo
 import com.lagradost.cloudstream3.ui.result.ResultViewModel2
 import com.lagradost.cloudstream3.ui.result.SyncViewModel
+import com.lagradost.cloudstream3.ui.result.buildResultEpisode
 import com.lagradost.cloudstream3.ui.result.setLinearListLayout
 import com.lagradost.cloudstream3.ui.setRecycledViewPool
 import com.lagradost.cloudstream3.ui.settings.Globals.EMULATOR
@@ -131,9 +135,11 @@ import com.lagradost.cloudstream3.utils.txt
 import com.lagradost.cloudstream3.utils.videoskip.VideoSkipStamp
 import com.lagradost.safefile.SafeFile
 import kotlinx.coroutines.Job
+import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.isActive
 import kotlinx.coroutines.launch
+import kotlinx.coroutines.withContext
 import java.io.Serializable
 import java.lang.ref.WeakReference
 import java.util.Calendar
@@ -186,6 +192,10 @@ class GeneratorPlayer : FullScreenPlayer() {
 
     private var isPlayerActive: AtomicBoolean = AtomicBoolean(false)
     private var isNextEpisode: Boolean = false // this is used to reset the watch time
+
+    private var zappingSession: ZappingSession? = null
+    private val zappingSwitchInProgress = AtomicBoolean(false)
+    private var zappingLoadJob: Job? = null
 
     private var preferredAutoSelectSubtitles: String? = null // null means do nothing, "" means none
     private val allMeta: List<ResultEpisode>?
@@ -1717,7 +1727,65 @@ class GeneratorPlayer : FullScreenPlayer() {
     override fun onDestroy() {
         ResultFragment.updateUI()
         currentVerifyLink?.cancel()
+        zappingLoadJob?.cancel()
+        zappingSession?.close()
         super.onDestroy()
+    }
+
+    override fun handleLiveChannelKey(keyCode: Int): Boolean {
+        if (keyCode != android.view.KeyEvent.KEYCODE_DPAD_UP &&
+            keyCode != android.view.KeyEvent.KEYCODE_DPAD_DOWN
+        ) return false
+        if (isShowing || isDialogOpen()) return false
+
+        val session = zappingSession ?: return false
+        val context = session.current() ?: return false
+        if (!zappingSwitchInProgress.compareAndSet(false, true)) return true
+
+        val targetIndex = if (keyCode == android.view.KeyEvent.KEYCODE_DPAD_UP) {
+            context.previousIndex()
+        } else {
+            context.nextIndex()
+        }
+        val target = context.channels[targetIndex]
+        zappingLoadJob?.cancel()
+        zappingLoadJob = viewLifecycleOwner.lifecycleScope.launch {
+            var playbackLoadStarted = false
+            try {
+                val api = getApiFromNameNull(target.apiName)
+                    ?: error("Provider not found: ${target.apiName}")
+                val response = withContext(Dispatchers.IO) {
+                    APIRepository(api).load(target.url)
+                }
+                val load = (response as? Resource.Success)?.value as? LiveStreamLoadResponse
+                    ?: error("Channel did not return a live response: ${target.name}")
+                val episode = buildResultEpisode(
+                    headerName = load.name,
+                    name = load.name,
+                    poster = target.posterUrl,
+                    episode = 0,
+                    data = load.dataUrl,
+                    apiName = load.apiName,
+                    id = "${target.apiName}:${target.url}".hashCode(),
+                    index = 0,
+                    tvType = load.type,
+                    parentId = "${target.apiName}:${target.url}".hashCode(),
+                )
+
+                releasePlayer()
+                viewModel.attachGenerator(RepoLinkGenerator(listOf(episode), page = load), 0)
+                session.select(targetIndex)
+                showToast(activity, target.name, Toast.LENGTH_SHORT)
+                viewModel.loadLinks()
+                playbackLoadStarted = true
+            } catch (error: Throwable) {
+                logError(error)
+                showToast(activity, error.message ?: getString(R.string.unexpected_error), Toast.LENGTH_SHORT)
+            } finally {
+                if (!playbackLoadStarted) zappingSwitchInProgress.set(false)
+            }
+        }
+        return true
     }
 
     var maxEpisodeSet: Int? = null
@@ -2246,6 +2314,9 @@ class GeneratorPlayer : FullScreenPlayer() {
 
         super.onBindingCreated(binding, savedInstanceState)
 
+        val sessionBundle = savedInstanceState?.takeIf { it.getString("uuid") != null } ?: arguments
+        zappingSession = ZappingPlayerLauncher.session(sessionBundle)
+
         // Avoid showing no links found
         if (generator == null || index == null) {
             exitPlayer()
@@ -2337,6 +2408,10 @@ class GeneratorPlayer : FullScreenPlayer() {
         }
         observe(viewModel.loadingLinks) { (loading, instance) ->
             if (instance != viewModel.state.instance) return@observe // Outdated observe
+
+            if (zappingSwitchInProgress.get() && loading !is Resource.Loading) {
+                zappingSwitchInProgress.set(false)
+            }
 
             when (loading) {
                 is Resource.Loading -> {
