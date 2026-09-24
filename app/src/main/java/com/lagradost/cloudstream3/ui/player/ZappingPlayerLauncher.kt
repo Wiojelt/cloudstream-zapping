@@ -18,14 +18,15 @@ object ZappingPlayerLauncher {
         val uuid = bundle.getString("uuid")
 
         if (uuid != null && zappingContext != null) {
-            ZappingSessionStore.put(uuid, zappingContext)
+            ZappingSession(uuid, zappingContext).register()
         }
 
         return bundle
     }
 
-    fun session(bundle: Bundle?): ZappingSessionController? {
+    fun session(bundle: Bundle?): ZappingSession? {
         val uuid = bundle?.getString("uuid") ?: return null
-        return ZappingSessionController(uuid)
+        val context = ZappingSessionStore.get(uuid) ?: return null
+        return ZappingSession(uuid, context)
     }
 }
