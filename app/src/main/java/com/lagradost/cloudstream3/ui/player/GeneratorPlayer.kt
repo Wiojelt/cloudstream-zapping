@@ -1788,7 +1788,7 @@ class GeneratorPlayer : FullScreenPlayer() {
         if (zappingChannelList != null) return
         val button = playerBinding?.playerChannelListBtt ?: return
         button.isVisible = true
-        button.setOnClickListener { toggleZappingList(true) }
+        button.setOnClickListener { toggleZappingList(zappingChannelList?.isVisible != true) }
 
         val panel = LinearLayout(root.context).apply {
             orientation = LinearLayout.VERTICAL
@@ -1799,28 +1799,6 @@ class GeneratorPlayer : FullScreenPlayer() {
             elevation = 12.toPx.toFloat()
             visibility = View.GONE
         }
-        val header = LinearLayout(root.context).apply {
-            orientation = LinearLayout.HORIZONTAL
-            gravity = Gravity.CENTER_VERTICAL
-            setPadding(16.toPx, 8.toPx, 8.toPx, 8.toPx)
-        }
-        val title = TextView(root.context).apply {
-            text = getString(R.string.player_channel_list)
-            textSize = 18f
-            setTextColor(root.context.colorFromAttribute(R.attr.textColor))
-            layoutParams = LinearLayout.LayoutParams(0, ViewGroup.LayoutParams.WRAP_CONTENT, 1f)
-        }
-        val close = MaterialButton(root.context).apply {
-            setIconResource(R.drawable.ic_baseline_close_24)
-            minWidth = 48.toPx
-            minHeight = 48.toPx
-            setOnClickListener { toggleZappingList(false) }
-            contentDescription = getString(R.string.sort_close)
-        }
-        header.addView(title)
-        header.addView(close)
-        panel.addView(header, LinearLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, 64.toPx))
-
         val recycler = RecyclerView(root.context).apply {
             layoutManager = LinearLayoutManager(root.context)
             overScrollMode = View.OVER_SCROLL_IF_CONTENT_SCROLLS
@@ -1920,7 +1898,7 @@ class GeneratorPlayer : FullScreenPlayer() {
             zappingChannelRecycler?.post {
                 val recycler = zappingChannelRecycler ?: return@post
                 val layoutManager = recycler.layoutManager as? LinearLayoutManager ?: return@post
-                val itemHeight = (recycler.width * 0.76f * 9f / 16f).toInt() + 8.toPx
+                val itemHeight = (recycler.width * 0.70f * 9f / 16f).toInt() + 4.toPx
                 val offset = ((recycler.height - itemHeight) / 2).coerceAtLeast(0)
                 layoutManager.scrollToPositionWithOffset(state.currentIndex, offset)
                 recycler.post {
