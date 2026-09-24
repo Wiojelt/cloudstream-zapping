@@ -19,7 +19,7 @@ import kotlin.math.roundToInt
 
 /** A focusable 16:9 channel-card list shared by touch devices and TV remotes. */
 class ZappingChannelAdapter(
-    private val onChannelClick: (Int) -> Unit,
+    private val onChannelClick: (Int, View) -> Unit,
 ) : RecyclerView.Adapter<ZappingChannelAdapter.ChannelViewHolder>() {
     private var channels: List<ZappingChannel> = emptyList()
     private var selectedIndex: Int = RecyclerView.NO_POSITION
@@ -113,7 +113,7 @@ class ZappingChannelAdapter(
         holder.card.animate().cancel()
         applyVisualState(holder, isActive, holder.card.hasFocus(), animate = false)
         holder.card.contentDescription = channel.name
-        holder.card.setOnClickListener { onChannelClick(position) }
+        holder.card.setOnClickListener { onChannelClick(position, holder.card) }
         holder.card.setOnFocusChangeListener { view, hasFocus ->
             applyVisualState(holder, position == selectedIndex, hasFocus, animate = true)
             if (hasFocus) {
@@ -130,7 +130,7 @@ class ZappingChannelAdapter(
     ) {
         val card = holder.card
         val highlighted = isActive || isFocused
-        val targetScale = if (highlighted) 1.07f else 1f
+        val targetScale = if (highlighted) 1.15f else 1f
         card.foreground = null
         card.cardElevation = 2.toPx.toFloat()
         if (animate) {

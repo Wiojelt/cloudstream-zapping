@@ -8,6 +8,7 @@ import android.content.Context
 import android.content.Intent
 import android.content.res.ColorStateList
 import android.graphics.Bitmap
+import android.graphics.Canvas
 import android.graphics.Color
 import android.graphics.Typeface
 import android.graphics.drawable.GradientDrawable
@@ -205,11 +206,12 @@ class GeneratorPlayer : FullScreenPlayer() {
     private var zappingLoadJob: Job? = null
     private var zappingOverlayJob: Job? = null
     private var zappingOverlayGeneration = 0
+    private var zappingTransitionActive = false
+    private var zappingTransitionPlayer: Any? = null
     private var zappingChannelList: LinearLayout? = null
     private var zappingChannelRecycler: RecyclerView? = null
     private var zappingChannelOverlay: FrameLayout? = null
     private var zappingChannelOverlayPoster: ImageView? = null
-    private var zappingChannelOverlayTitle: TextView? = null
     private var zappingChannelAdapter: ZappingChannelAdapter? = null
 
     private var preferredAutoSelectSubtitles: String? = null // null means do nothing, "" means none
@@ -463,6 +465,10 @@ class GeneratorPlayer : FullScreenPlayer() {
 
     override fun playerUpdated(player: Any?) {
         super.playerUpdated(player)
+
+        if (zappingTransitionActive && player != null) {
+            zappingTransitionPlayer = player
+        }
 
         // Cancel the notification when released
         if (player == null) {
@@ -1745,6 +1751,8 @@ class GeneratorPlayer : FullScreenPlayer() {
         zappingLoadJob?.cancel()
         zappingOverlayJob?.cancel()
         zappingOverlayGeneration++
+        zappingTransitionActive = false
+        zappingTransitionPlayer = null
         if (activity?.isChangingConfigurations != true) {
             zappingSession?.close()
         }
@@ -1784,6 +1792,13 @@ class GeneratorPlayer : FullScreenPlayer() {
         }
     }
 
+    override fun playerFirstFrameRendered(player: Any?) {
+        super.playerFirstFrameRendered(player)
+        if (zappingTransitionActive && zappingTransitionPlayer === player) {
+            completeZappingTransition()
+        }
+    }
+
     private fun setupZappingUi() {
         val session = zappingSession ?: return
         if (!isZappingEnabled()) return
@@ -1809,9 +1824,8 @@ class GeneratorPlayer : FullScreenPlayer() {
             clipChildren = false
             clipToPadding = false
         }
-        val adapter = ZappingChannelAdapter { index ->
-            toggleZappingList(false)
-            switchToLiveChannel(index)
+        val adapter = ZappingChannelAdapter { index, card ->
+            switchToLiveChannel(index, card)
         }
         recycler.adapter = adapter
         panel.addView(recycler, LinearLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, 0, 1f))
@@ -1827,22 +1841,9 @@ class GeneratorPlayer : FullScreenPlayer() {
 
         val channelOverlay = FrameLayout(root.context).apply {
             visibility = View.GONE
-            elevation = 16.toPx.toFloat()
+            clipChildren = false
+            clipToPadding = false
         }
-        val overlayCard = androidx.cardview.widget.CardView(root.context).apply {
-            radius = 14.toPx.toFloat()
-            cardElevation = 8.toPx.toFloat()
-            val backgroundColor = root.context.colorFromAttribute(R.attr.primaryBlackBackground)
-            setCardBackgroundColor(
-                Color.argb(
-                    0xD8,
-                    Color.red(backgroundColor),
-                    Color.green(backgroundColor),
-                    Color.blue(backgroundColor),
-                )
-            )
-        }
-        val overlayContent = FrameLayout(root.context)
         val overlayPoster = ImageView(root.context).apply {
             layoutParams = FrameLayout.LayoutParams(
                 ViewGroup.LayoutParams.MATCH_PARENT,
@@ -1851,50 +1852,13 @@ class GeneratorPlayer : FullScreenPlayer() {
             scaleType = ImageView.ScaleType.CENTER_CROP
             setBackgroundColor(root.context.colorFromAttribute(R.attr.boxItemBackground))
         }
-        val overlayScrim = View(root.context).apply {
-            layoutParams = FrameLayout.LayoutParams(
-                ViewGroup.LayoutParams.MATCH_PARENT,
-                96.toPx,
-                Gravity.BOTTOM,
-            )
-            background = GradientDrawable(
-                GradientDrawable.Orientation.TOP_BOTTOM,
-                intArrayOf(Color.TRANSPARENT, 0xF0000000.toInt()),
-            )
-        }
-        val overlayTitle = TextView(root.context).apply {
-            layoutParams = FrameLayout.LayoutParams(
-                ViewGroup.LayoutParams.MATCH_PARENT,
-                ViewGroup.LayoutParams.WRAP_CONTENT,
-                Gravity.BOTTOM,
-            ).apply {
-                marginStart = 20.toPx
-                marginEnd = 20.toPx
-                bottomMargin = 16.toPx
-            }
-            textSize = 20f
-            maxLines = 2
-            ellipsize = android.text.TextUtils.TruncateAt.END
-            setTextColor(root.context.colorFromAttribute(R.attr.textColor))
-        }
-        overlayContent.addView(overlayPoster)
-        overlayContent.addView(overlayScrim)
-        overlayContent.addView(overlayTitle)
-        overlayCard.addView(
-            overlayContent,
-            ViewGroup.LayoutParams(320.toPx, 180.toPx),
-        )
-        channelOverlay.addView(
-            overlayCard,
-            FrameLayout.LayoutParams(320.toPx, 180.toPx, Gravity.CENTER),
-        )
+        channelOverlay.addView(overlayPoster)
         root.addView(
             channelOverlay,
             FrameLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.MATCH_PARENT)
         )
         zappingChannelOverlay = channelOverlay
         zappingChannelOverlayPoster = overlayPoster
-        zappingChannelOverlayTitle = overlayTitle
         adapter.submit(session.current()?.channels.orEmpty(), session.current()?.currentIndex ?: 0)
     }
 
@@ -1919,36 +1883,114 @@ class GeneratorPlayer : FullScreenPlayer() {
         }
     }
 
-    private fun showZappingChannelOverlay(channel: ZappingChannel) {
-        if (!isZappingEnabled()) return
-        val overlay = zappingChannelOverlay ?: return
+    private fun beginZappingTransition(channel: ZappingChannel, sourceCard: View): Boolean {
+        if (!isZappingEnabled()) return false
+        val root = zappingOverlayParent() ?: return false
+        val overlay = zappingChannelOverlay ?: return false
+        val poster = zappingChannelOverlayPoster ?: return false
+        if (root.width <= 0 || root.height <= 0 || sourceCard.width <= 0 || sourceCard.height <= 0) {
+            return false
+        }
+
+        val sourceLocation = IntArray(2)
+        val rootLocation = IntArray(2)
+        sourceCard.getLocationOnScreen(sourceLocation)
+        root.getLocationOnScreen(rootLocation)
+
+        val sourceScaleX = sourceCard.scaleX.coerceAtLeast(1f)
+        val sourceScaleY = sourceCard.scaleY.coerceAtLeast(1f)
+        val sourceWidth = sourceCard.width * sourceScaleX
+        val sourceHeight = sourceCard.height * sourceScaleY
+        val sourceLeft = (sourceLocation[0] - rootLocation[0]).toFloat() -
+            (sourceWidth - sourceCard.width) / 2f
+        val sourceTop = (sourceLocation[1] - rootLocation[1]).toFloat() -
+            (sourceHeight - sourceCard.height) / 2f
         val generation = ++zappingOverlayGeneration
+
         zappingOverlayJob?.cancel()
         overlay.animate().cancel()
-        zappingChannelOverlayPoster?.loadImage(channel.posterUrl)
-        zappingChannelOverlayTitle?.text = channel.name
+        poster.animate().cancel()
+        zappingTransitionActive = true
+        zappingTransitionPlayer = null
+        poster.setImageBitmap(
+            Bitmap.createBitmap(sourceCard.width, sourceCard.height, Bitmap.Config.ARGB_8888).also {
+                sourceCard.draw(Canvas(it))
+            }
+        )
+        poster.pivotX = 0f
+        poster.pivotY = 0f
+        poster.translationX = sourceLeft
+        poster.translationY = sourceTop
+        poster.scaleX = sourceWidth / root.width.toFloat()
+        poster.scaleY = sourceHeight / root.height.toFloat()
+        poster.alpha = 1f
         overlay.isVisible = true
-        overlay.alpha = 0f
-        overlay.animate()
-            .alpha(1f)
-            .setDuration(220L)
+        binding?.playerView?.alpha = 0f
+
+        zappingChannelList?.animate()?.cancel()
+        zappingChannelList?.animate()?.alpha(0f)?.setDuration(160L)?.setInterpolator(
+            DecelerateInterpolator()
+        )?.withEndAction {
+            if (generation == zappingOverlayGeneration) {
+                zappingChannelList?.isVisible = false
+                zappingChannelList?.alpha = 1f
+            }
+        }?.start()
+
+        poster.animate()
+            .translationX(0f)
+            .translationY(0f)
+            .scaleX(1f)
+            .scaleY(1f)
+            .alpha(0.08f)
+            .setDuration(850L)
             .setInterpolator(DecelerateInterpolator())
-            .start()
-        zappingOverlayJob = viewLifecycleOwner.lifecycleScope.launch {
-            delay(1100L)
-            if (generation != zappingOverlayGeneration) return@launch
-            overlay.animate()
-                .alpha(0f)
-                .setDuration(300L)
-                .setInterpolator(DecelerateInterpolator())
-                .withEndAction {
-                    if (generation == zappingOverlayGeneration) {
-                        overlay.isVisible = false
-                        overlay.alpha = 1f
-                    }
+            .withEndAction {
+                if (generation == zappingOverlayGeneration && zappingTransitionActive) {
+                    poster.alpha = 0.08f
                 }
-                .start()
-        }
+            }
+            .start()
+        return true
+    }
+
+    private fun completeZappingTransition() {
+        if (!zappingTransitionActive) return
+        val overlay = zappingChannelOverlay ?: return
+        val poster = zappingChannelOverlayPoster ?: return
+        val generation = zappingOverlayGeneration
+        zappingTransitionPlayer = null
+        binding?.playerView?.animate()
+            ?.alpha(1f)
+            ?.setDuration(280L)
+            ?.setInterpolator(DecelerateInterpolator())
+            ?.start()
+        poster.animate()
+            .alpha(0f)
+            .setDuration(300L)
+            .setInterpolator(DecelerateInterpolator())
+            .withEndAction {
+                if (generation != zappingOverlayGeneration) return@withEndAction
+                overlay.isVisible = false
+                poster.alpha = 1f
+                poster.setImageDrawable(null)
+                zappingTransitionActive = false
+            }
+            .start()
+    }
+
+    private fun cancelZappingTransition() {
+        zappingOverlayGeneration++
+        zappingTransitionActive = false
+        zappingTransitionPlayer = null
+        zappingOverlayJob?.cancel()
+        zappingChannelOverlay?.animate()?.cancel()
+        zappingChannelOverlayPoster?.animate()?.cancel()
+        zappingChannelOverlay?.isVisible = false
+        zappingChannelOverlayPoster?.alpha = 1f
+        zappingChannelOverlayPoster?.setImageDrawable(null)
+        binding?.playerView?.animate()?.cancel()
+        binding?.playerView?.alpha = 1f
     }
 
     override fun handlePlayerBackPressed(): Boolean {
@@ -1960,14 +2002,21 @@ class GeneratorPlayer : FullScreenPlayer() {
         return false
     }
 
-    private fun switchToLiveChannel(targetIndex: Int): Boolean {
+    private fun switchToLiveChannel(targetIndex: Int, sourceCard: View? = null): Boolean {
         if (!isZappingEnabled()) return false
         val session = zappingSession ?: return false
         val state = session.current() ?: return false
-        if (targetIndex !in state.channels.indices || targetIndex == state.currentIndex) return true
+        if (targetIndex !in state.channels.indices) return false
+        if (targetIndex == state.currentIndex) {
+            toggleZappingList(false)
+            return true
+        }
         if (!zappingSwitchInProgress.compareAndSet(false, true)) return true
 
         val target = state.channels[targetIndex]
+        if (sourceCard == null || !beginZappingTransition(target, sourceCard)) {
+            toggleZappingList(false)
+        }
         zappingLoadJob?.cancel()
         zappingLoadJob = viewLifecycleOwner.lifecycleScope.launch {
             var playbackLoadStarted = false
@@ -1996,11 +2045,11 @@ class GeneratorPlayer : FullScreenPlayer() {
                 viewModel.attachGenerator(RepoLinkGenerator(listOf(episode), page = load), 0)
                 session.select(targetIndex)
                 zappingChannelAdapter?.submit(state.channels, targetIndex)
-                showZappingChannelOverlay(target)
                 viewModel.loadLinks()
                 playbackLoadStarted = true
             } catch (error: Throwable) {
                 logError(error)
+                cancelZappingTransition()
                 showToast(activity, error.message ?: getString(R.string.unexpected_error), Toast.LENGTH_SHORT)
             } finally {
                 if (!playbackLoadStarted) zappingSwitchInProgress.set(false)
