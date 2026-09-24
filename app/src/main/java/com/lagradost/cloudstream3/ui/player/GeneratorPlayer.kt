@@ -8,9 +8,9 @@ import android.content.Context
 import android.content.Intent
 import android.content.res.ColorStateList
 import android.graphics.Bitmap
-import android.graphics.Canvas
 import android.graphics.Color
 import android.graphics.Typeface
+import android.graphics.drawable.BitmapDrawable
 import android.graphics.drawable.GradientDrawable
 import android.os.Build
 import android.os.Bundle
@@ -204,10 +204,10 @@ class GeneratorPlayer : FullScreenPlayer() {
     private var zappingSession: ZappingSession? = null
     private val zappingSwitchInProgress = AtomicBoolean(false)
     private var zappingLoadJob: Job? = null
-    private var zappingOverlayJob: Job? = null
     private var zappingOverlayGeneration = 0
     private var zappingTransitionActive = false
     private var zappingTransitionPlayer: Any? = null
+    private var zappingTransitionBitmap: Bitmap? = null
     private var zappingChannelList: LinearLayout? = null
     private var zappingChannelRecycler: RecyclerView? = null
     private var zappingChannelOverlay: FrameLayout? = null
@@ -1749,10 +1749,10 @@ class GeneratorPlayer : FullScreenPlayer() {
         ResultFragment.updateUI()
         currentVerifyLink?.cancel()
         zappingLoadJob?.cancel()
-        zappingOverlayJob?.cancel()
         zappingOverlayGeneration++
         zappingTransitionActive = false
         zappingTransitionPlayer = null
+        clearZappingTransitionBitmap()
         if (activity?.isChangingConfigurations != true) {
             zappingSession?.close()
         }
@@ -1907,16 +1907,15 @@ class GeneratorPlayer : FullScreenPlayer() {
             (sourceHeight - sourceCard.height) / 2f
         val generation = ++zappingOverlayGeneration
 
-        zappingOverlayJob?.cancel()
         overlay.animate().cancel()
         poster.animate().cancel()
+        val transitionBitmap = createSoftwareTransitionBitmap(sourceCard) ?: return false
         zappingTransitionActive = true
         zappingTransitionPlayer = null
-        poster.setImageBitmap(
-            Bitmap.createBitmap(sourceCard.width, sourceCard.height, Bitmap.Config.ARGB_8888).also {
-                sourceCard.draw(Canvas(it))
-            }
-        )
+        poster.setImageDrawable(null)
+        clearZappingTransitionBitmap()
+        zappingTransitionBitmap = transitionBitmap
+        poster.setImageBitmap(transitionBitmap)
         poster.pivotX = 0f
         poster.pivotY = 0f
         poster.translationX = sourceLeft
@@ -1954,6 +1953,33 @@ class GeneratorPlayer : FullScreenPlayer() {
         return true
     }
 
+    /**
+     * ImageLoader may provide a hardware BitmapDrawable. Copy only the selected
+     * poster to ARGB_8888 before assigning it to the transition ImageView so no
+     * software Canvas ever tries to draw a hardware bitmap.
+     */
+    private fun createSoftwareTransitionBitmap(sourceCard: View): Bitmap? {
+        return try {
+            val card = sourceCard as? ViewGroup ?: return null
+            val content = card.getChildAt(0) as? ViewGroup ?: return null
+            val poster = content.getChildAt(0) as? ImageView ?: return null
+            val bitmap = (poster.drawable as? BitmapDrawable)?.bitmap ?: return null
+            if (bitmap.isRecycled) return null
+            bitmap.copy(Bitmap.Config.ARGB_8888, false)
+        } catch (error: Throwable) {
+            logError(error)
+            null
+        }
+    }
+
+    private fun clearZappingTransitionBitmap() {
+        val bitmap = zappingTransitionBitmap
+        zappingTransitionBitmap = null
+        if (bitmap != null && !bitmap.isRecycled) {
+            bitmap.recycle()
+        }
+    }
+
     private fun completeZappingTransition() {
         if (!zappingTransitionActive) return
         val overlay = zappingChannelOverlay ?: return
@@ -1974,6 +2000,7 @@ class GeneratorPlayer : FullScreenPlayer() {
                 overlay.isVisible = false
                 poster.alpha = 1f
                 poster.setImageDrawable(null)
+                clearZappingTransitionBitmap()
                 zappingTransitionActive = false
             }
             .start()
@@ -1983,12 +2010,12 @@ class GeneratorPlayer : FullScreenPlayer() {
         zappingOverlayGeneration++
         zappingTransitionActive = false
         zappingTransitionPlayer = null
-        zappingOverlayJob?.cancel()
         zappingChannelOverlay?.animate()?.cancel()
         zappingChannelOverlayPoster?.animate()?.cancel()
         zappingChannelOverlay?.isVisible = false
         zappingChannelOverlayPoster?.alpha = 1f
         zappingChannelOverlayPoster?.setImageDrawable(null)
+        clearZappingTransitionBitmap()
         binding?.playerView?.animate()?.cancel()
         binding?.playerView?.alpha = 1f
     }
