@@ -19,6 +19,7 @@ import android.view.Gravity
 import android.view.LayoutInflater
 import android.view.View
 import android.view.ViewGroup
+import android.view.animation.DecelerateInterpolator
 import android.widget.AbsListView
 import android.widget.ArrayAdapter
 import android.widget.FrameLayout
@@ -203,6 +204,7 @@ class GeneratorPlayer : FullScreenPlayer() {
     private val zappingSwitchInProgress = AtomicBoolean(false)
     private var zappingLoadJob: Job? = null
     private var zappingOverlayJob: Job? = null
+    private var zappingOverlayGeneration = 0
     private var zappingChannelList: LinearLayout? = null
     private var zappingChannelRecycler: RecyclerView? = null
     private var zappingChannelOverlay: FrameLayout? = null
@@ -1742,6 +1744,7 @@ class GeneratorPlayer : FullScreenPlayer() {
         currentVerifyLink?.cancel()
         zappingLoadJob?.cancel()
         zappingOverlayJob?.cancel()
+        zappingOverlayGeneration++
         if (activity?.isChangingConfigurations != true) {
             zappingSession?.close()
         }
@@ -1829,7 +1832,15 @@ class GeneratorPlayer : FullScreenPlayer() {
         val overlayCard = androidx.cardview.widget.CardView(root.context).apply {
             radius = 14.toPx.toFloat()
             cardElevation = 8.toPx.toFloat()
-            setCardBackgroundColor(root.context.colorFromAttribute(R.attr.primaryBlackBackground))
+            val backgroundColor = root.context.colorFromAttribute(R.attr.primaryBlackBackground)
+            setCardBackgroundColor(
+                Color.argb(
+                    0xD8,
+                    Color.red(backgroundColor),
+                    Color.green(backgroundColor),
+                    Color.blue(backgroundColor),
+                )
+            )
         }
         val overlayContent = FrameLayout(root.context)
         val overlayPoster = ImageView(root.context).apply {
@@ -1898,7 +1909,7 @@ class GeneratorPlayer : FullScreenPlayer() {
             zappingChannelRecycler?.post {
                 val recycler = zappingChannelRecycler ?: return@post
                 val layoutManager = recycler.layoutManager as? LinearLayoutManager ?: return@post
-                val itemHeight = (recycler.width * 0.70f * 9f / 16f).toInt() + 4.toPx
+                val itemHeight = (recycler.width * 0.70f * 9f / 16f).toInt() + 2.toPx
                 val offset = ((recycler.height - itemHeight) / 2).coerceAtLeast(0)
                 layoutManager.scrollToPositionWithOffset(state.currentIndex, offset)
                 recycler.post {
@@ -1911,13 +1922,32 @@ class GeneratorPlayer : FullScreenPlayer() {
     private fun showZappingChannelOverlay(channel: ZappingChannel) {
         if (!isZappingEnabled()) return
         val overlay = zappingChannelOverlay ?: return
+        val generation = ++zappingOverlayGeneration
+        zappingOverlayJob?.cancel()
+        overlay.animate().cancel()
         zappingChannelOverlayPoster?.loadImage(channel.posterUrl)
         zappingChannelOverlayTitle?.text = channel.name
         overlay.isVisible = true
-        zappingOverlayJob?.cancel()
+        overlay.alpha = 0f
+        overlay.animate()
+            .alpha(1f)
+            .setDuration(220L)
+            .setInterpolator(DecelerateInterpolator())
+            .start()
         zappingOverlayJob = viewLifecycleOwner.lifecycleScope.launch {
-            delay(1800)
-            overlay.isVisible = false
+            delay(1100L)
+            if (generation != zappingOverlayGeneration) return@launch
+            overlay.animate()
+                .alpha(0f)
+                .setDuration(300L)
+                .setInterpolator(DecelerateInterpolator())
+                .withEndAction {
+                    if (generation == zappingOverlayGeneration) {
+                        overlay.isVisible = false
+                        overlay.alpha = 1f
+                    }
+                }
+                .start()
         }
     }
 

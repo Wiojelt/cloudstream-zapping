@@ -37,16 +37,11 @@ class ZappingChannelAdapter(
                 ViewGroup.LayoutParams.MATCH_PARENT,
                 ViewGroup.LayoutParams.WRAP_CONTENT,
             ).apply {
-                topMargin = 2.toPx
-                bottomMargin = 2.toPx
+                topMargin = 1.toPx
+                bottomMargin = 1.toPx
             }
             clipChildren = false
             clipToPadding = false
-        }
-        val glow = View(context).apply {
-            isFocusable = false
-            isClickable = false
-            alpha = 0f
         }
         val card = AspectRatioCardView(context).apply {
             layoutParams = FrameLayout.LayoutParams(
@@ -101,9 +96,8 @@ class ZappingChannelAdapter(
         content.addView(scrim)
         content.addView(title)
         card.addView(content)
-        item.addView(glow)
         item.addView(card)
-        return ChannelViewHolder(item, glow, card, poster, title)
+        return ChannelViewHolder(item, card, poster, title)
     }
 
     override fun onBindViewHolder(holder: ChannelViewHolder, position: Int) {
@@ -135,52 +129,19 @@ class ZappingChannelAdapter(
         animate: Boolean,
     ) {
         val card = holder.card
-        val context = card.context
         val highlighted = isActive || isFocused
         val targetScale = if (highlighted) 1.07f else 1f
-        val targetElevation = if (highlighted) 10.toPx.toFloat() else 2.toPx.toFloat()
-        val targetGlowScale = if (highlighted) 1.14f else 1f
-        val targetGlowAlpha = if (highlighted) 0.9f else 0f
-        holder.glow.background = accentGlow(context)
-        card.foreground = if (highlighted) accentOutline(context) else null
-        card.cardElevation = targetElevation
+        card.foreground = null
+        card.cardElevation = 2.toPx.toFloat()
         if (animate) {
             card.animate()
                 .scaleX(targetScale)
                 .scaleY(targetScale)
                 .setDuration(150L)
                 .start()
-            holder.glow.animate()
-                .scaleX(targetGlowScale)
-                .scaleY(targetGlowScale)
-                .alpha(targetGlowAlpha)
-                .setDuration(150L)
-                .start()
         } else {
             card.scaleX = targetScale
             card.scaleY = targetScale
-            holder.glow.scaleX = targetGlowScale
-            holder.glow.scaleY = targetGlowScale
-            holder.glow.alpha = targetGlowAlpha
-        }
-    }
-
-    private fun accentOutline(context: android.content.Context): GradientDrawable {
-        val accent = context.colorFromAttribute(R.attr.colorPrimary)
-        val glowColor = Color.argb(0xB0, Color.red(accent), Color.green(accent), Color.blue(accent))
-        return GradientDrawable().apply {
-            cornerRadius = 12.toPx.toFloat()
-            setColor(Color.TRANSPARENT)
-            setStroke(1.toPx, glowColor)
-        }
-    }
-
-    private fun accentGlow(context: android.content.Context): GradientDrawable {
-        val accent = context.colorFromAttribute(R.attr.colorPrimary)
-        val glowColor = Color.argb(0x58, Color.red(accent), Color.green(accent), Color.blue(accent))
-        return GradientDrawable().apply {
-            cornerRadius = 14.toPx.toFloat()
-            setColor(glowColor)
         }
     }
 
@@ -197,7 +158,6 @@ class ZappingChannelAdapter(
 
     class ChannelViewHolder(
         val itemViewContainer: CarouselItemContainer,
-        val glow: View,
         val card: AspectRatioCardView,
         val poster: ImageView,
         val title: TextView,
@@ -208,12 +168,7 @@ class ZappingChannelAdapter(
             val availableWidth = MeasureSpec.getSize(widthMeasureSpec)
             val cardWidth = (availableWidth * 0.70f).roundToInt()
             val cardHeight = (cardWidth * 9f / 16f).roundToInt()
-            val glow = getChildAt(0)
-            val card = getChildAt(1)
-            glow?.measure(
-                MeasureSpec.makeMeasureSpec(cardWidth, MeasureSpec.EXACTLY),
-                MeasureSpec.makeMeasureSpec(cardHeight, MeasureSpec.EXACTLY),
-            )
+            val card = getChildAt(0)
             card?.measure(
                 MeasureSpec.makeMeasureSpec(cardWidth, MeasureSpec.EXACTLY),
                 MeasureSpec.makeMeasureSpec(cardHeight, MeasureSpec.EXACTLY),
@@ -222,9 +177,8 @@ class ZappingChannelAdapter(
         }
 
         override fun onLayout(changed: Boolean, left: Int, top: Int, right: Int, bottom: Int) {
-            val card = getChildAt(1) ?: return
+            val card = getChildAt(0) ?: return
             val cardLeft = width - card.measuredWidth
-            getChildAt(0)?.layout(cardLeft, 0, width, card.measuredHeight)
             card.layout(cardLeft, 0, width, card.measuredHeight)
         }
     }
